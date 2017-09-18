@@ -1,0 +1,14 @@
+startChains:
+
+  alestore:
+  
+    - apama.eventMap:
+        allowMissing: true
+              
+    - ElasticSearchTransport:
+        port: ${elasticsearchplugin.port}
+        host: ${elasticsearchplugin.host}
+        user: ${elasticsearchplugin.user}
+        password: ${elasticsearchplugin.password}
+        index: ${elasticsearchplugin.index}
+        type: ${elasticsearchplugin.type}
