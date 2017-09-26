@@ -12,6 +12,7 @@ import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.impl.nio.client.HttpAsyncClientBuilder;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
+import org.elasticsearch.action.main.MainResponse;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
 import org.elasticsearch.client.RestHighLevelClient;
@@ -39,7 +40,7 @@ public class ElasticSearchPlugin extends AbstractTransport
 	final private  String TYPE;
 	final CredentialsProvider credentialsProvider;
 	private RestClient restClient;
-	
+	private RestHighLevelClient esClient;
     public ElasticSearchPlugin(Logger logger, TransportConstructorParameters params)
 			throws IllegalArgumentException, Exception {
 		super(logger, params);
@@ -56,9 +57,8 @@ public class ElasticSearchPlugin extends AbstractTransport
 
 
     
-    public IndexResponse insertString(String index, String type, String strToInsert, RestClient restClient) throws IOException {
+    public IndexResponse insertString(String index, String type, String strToInsert) throws IOException {
     	logger.debug("Index: " + index + " Type: " + type + " Doc: " + strToInsert); 
-		RestHighLevelClient esClient = new RestHighLevelClient(restClient);
 		IndexRequest request = new IndexRequest(index);
 		request.type(type);
 		request.source(strToInsert,XContentType.JSON);
@@ -68,7 +68,7 @@ public class ElasticSearchPlugin extends AbstractTransport
 
     @Override
     public void hostReady() throws Exception {
-    	logger.debug("Elastic Search Host Ready");
+    	logger.info("Start Elastic Search Host Ready");
 
     	RestClientBuilder builder = RestClient.builder(new HttpHost(HOST, PORT))
 		        .setHttpClientConfigCallback(new RestClientBuilder.HttpClientConfigCallback() {
@@ -78,7 +78,28 @@ public class ElasticSearchPlugin extends AbstractTransport
 		        });
 		
 		restClient = builder.build();
-		logger.info("Elastic Search Client Started");
+		esClient = new RestHighLevelClient(restClient);
+		boolean clusterUp = false;
+		MainResponse response = null;
+		
+		while (!clusterUp) {
+			try {
+				response = esClient.info();
+			} catch (IOException e ) {
+				logger.error("Could not connect ot Elastic Search. Retrying. " + e.getMessage());
+				Thread.sleep(5000);
+				continue;
+			}
+			String clusterName = response.getClusterName().value();
+			if (response != null && !clusterName.equalsIgnoreCase("")) {
+				clusterUp = true;
+				logger.info("Elastic Search Client Successfully Started on Cluster: " + clusterName);
+				break;
+			}else {
+				logger.error("Could not get cluster name. Retrying. ");
+				Thread.sleep(5000);
+			}
+		}
 
     }
     
@@ -92,14 +113,25 @@ public class ElasticSearchPlugin extends AbstractTransport
     
 	@Override
 	public void sendBatchTowardsTransport(List<Message> messages) {
-		
+		String index =INDEX;
+		String type = TYPE;
 		for (Message message : messages) {
 			
 			// Extracting Metadata
 			Map<String, String> metaMap = message.getMetadata();
 			logger.debug("Metadata: " + metaMap.toString());
-			String eventType = metaMap.get("sag.type");
-			String eventChannel = metaMap.get("sag.channel");
+			if (INDEX.startsWith("metadata")) {
+				String indexKey = INDEX.substring(INDEX.indexOf(".") +1,INDEX.length());
+				logger.debug("IndexKey: "+ indexKey);
+				index= metaMap.get(indexKey);
+				logger.debug("index: "+ index);
+			}
+			if (TYPE.startsWith("metadata")) {
+				String typeKey = TYPE.substring(TYPE.indexOf(".") +1,TYPE.length());
+				logger.debug("TypeKey: "+ typeKey);
+				type= metaMap.get(typeKey);
+				logger.debug("type: "+ type);
+			}
 			Map<String, Object> payloadMap;
 			if (  !(message.getPayload() instanceof Map)) {
 				logger.info("Payload is not a Map skipping.");
@@ -121,8 +153,8 @@ public class ElasticSearchPlugin extends AbstractTransport
 			// Indexing Document
 			IndexResponse resp;
 			try {
-				resp = insertString(INDEX, TYPE, jsonString, restClient);
-				logger.info("Document insert response = " + resp.getResult().getLowercase()); 
+				resp = insertString(index, type, jsonString);
+				logger.debug("Document insert response = " + resp.getResult().getLowercase()); 
 			} catch (IOException e) {
 				logger.error("Could not Index Document.", e.getMessage());
 				continue;
