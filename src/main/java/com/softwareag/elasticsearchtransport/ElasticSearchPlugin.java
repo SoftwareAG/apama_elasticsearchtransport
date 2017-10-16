@@ -36,8 +36,8 @@ public class ElasticSearchPlugin extends AbstractTransport
 	final private String HOST;
 	final private String USER;
 	final private  String PASSWORD;
-	final private  String INDEX;
-	final private  String TYPE;
+	final private  String INDEX_PATTER;
+	final private  String TYPE_PATTERN;
 	final CredentialsProvider credentialsProvider;
 	private RestClient restClient;
 	private RestHighLevelClient esClient;
@@ -48,8 +48,8 @@ public class ElasticSearchPlugin extends AbstractTransport
 		HOST = (String)MapHelper.getString(config, "host");
 		USER = (String)MapHelper.getString(config, "user");
 		PASSWORD = (String)MapHelper.getString(config, "password");
-		INDEX = (String)MapHelper.getString(config, "index");
-		TYPE = (String)MapHelper.getString(config, "type");
+		INDEX_PATTER = (String)MapHelper.getString(config, "index");
+		TYPE_PATTERN = (String)MapHelper.getString(config, "type");
 		credentialsProvider= new BasicCredentialsProvider();
 		credentialsProvider.setCredentials(AuthScope.ANY,
 		        new UsernamePasswordCredentials(USER,PASSWORD));
@@ -113,34 +113,60 @@ public class ElasticSearchPlugin extends AbstractTransport
     
 	@Override
 	public void sendBatchTowardsTransport(List<Message> messages) {
-		String index =INDEX;
-		String type = TYPE;
+		
 		for (Message message : messages) {
 			
-			// Extracting Metadata
-			Map<String, String> metaMap = message.getMetadata();
-			logger.debug("Metadata: " + metaMap.toString());
-			if (INDEX.startsWith("metadata")) {
-				String indexKey = INDEX.substring(INDEX.indexOf(".") +1,INDEX.length());
-				logger.debug("IndexKey: "+ indexKey);
-				index= metaMap.get(indexKey);
-				logger.debug("index: "+ index);
-			}
-			if (TYPE.startsWith("metadata")) {
-				String typeKey = TYPE.substring(TYPE.indexOf(".") +1,TYPE.length());
-				logger.debug("TypeKey: "+ typeKey);
-				type= metaMap.get(typeKey);
-				logger.debug("type: "+ type);
-			}
+			
 			Map<String, Object> payloadMap;
-			if (  !(message.getPayload() instanceof Map)) {
-				logger.info("Payload is not a Map skipping.");
+			Map<String, String> metaMap;
+			String index = "";
+			String type = "";
+
+			if (message.getPayload() instanceof Map && message.getMetadata() instanceof Map ) {
+				// Extracting Metadata				
+				metaMap = message.getMetadata();
+				// Extracting payload
+				payloadMap = (Map<String, Object>) message.getPayload();
+				logger.debug("Payload: " + payloadMap.toString());
+				logger.debug("Metadata: " + metaMap.toString());
+				String[] mappingsIndex = INDEX_PATTER.split(",");
+				String[] mappingsType = TYPE_PATTERN.split(",");
+				for (int i = 0; i < mappingsIndex.length; i++) {
+					String mappingfield = mappingsIndex[i].substring(mappingsIndex[i].indexOf(".") +1,mappingsIndex[i].length());
+					if (mappingsIndex[i].startsWith("metadata")) {
+						index += metaMap.get(mappingfield);
+					} else if(mappingsIndex[i].startsWith("payload")){
+						index += payloadMap.get(mappingfield);
+					}else if (!mappingsIndex[i].equals("")) {
+						index  += mappingsIndex[i];
+					}else {
+						logger.error("Could not get Index. Skipping. Please provide payload. or metadata. as prefix.  Or use a String");
+						continue;
+					}
+				}
+				for (int i = 0; i < mappingsType.length; i++) {
+					String mappingfield = mappingsType[i].substring(mappingsType[i].indexOf(".") +1,mappingsType[i].length());
+					if (mappingsType[i].startsWith("metadata")) {
+						type += metaMap.get(mappingfield);
+					} else if(mappingsType[i].startsWith("payload")){
+						type += payloadMap.get(mappingfield);
+						
+					}else if (!mappingsType[i].equals("")) {
+						type += mappingsType[i];
+					}
+					else {
+						logger.error("Could not get Type. Skipping. Please provide payload. or metadata. as prefix. Or use a String");
+						continue;
+					}
+				}
+				logger.debug("index: "+ index);
+				logger.debug("type: "+ type);
+				
+			} else {
+				logger.info("Payload Or Metadata is not a Map skipping.");
 				continue;
 			}
-	
-			
-			// Extracting payload
-			payloadMap = (Map<String, Object>) message.getPayload();
+
 			ObjectMapper mapper = new ObjectMapper();
 			String jsonString = "";
 			try {
@@ -163,4 +189,6 @@ public class ElasticSearchPlugin extends AbstractTransport
 
 		
 	}
+	
+
 }
