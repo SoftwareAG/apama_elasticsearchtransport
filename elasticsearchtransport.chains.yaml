@@ -10,5 +10,5 @@ startChains:
         host: ${elasticsearchplugin.host}
         user: ${elasticsearchplugin.user}
         password: ${elasticsearchplugin.password}
-        index: ${elasticsearchplugin.index}
-        type: ${elasticsearchplugin.type}
+        index: "payload.source_id,_,payload.type"
+        type: "payload.type"
