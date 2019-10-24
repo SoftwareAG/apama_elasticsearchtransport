@@ -1,5 +1,0 @@
-plugins:
-  ElasticSearchTransport:
-    directory: ${PARENT_DIR}/../../../lib
-    classpath: elasticsearchtransport.jar
-    class: com.softwareag.elasticsearchtransport.ElasticSearchPlugin

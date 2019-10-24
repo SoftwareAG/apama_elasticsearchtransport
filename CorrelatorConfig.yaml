@@ -1,0 +1,42 @@
+###############################################################################
+# $Copyright (c) 2019 Software AG, Darmstadt, Germany and/or Software AG USA Inc., Reston, VA, USA, and/or its subsidiaries and/or its affiliates and/or their licensors.$
+# Use, reproduction, transfer, publication or disclosure is prohibited except as specifically provided for in your License Agreement with Software AG
+###############################################################################
+
+### correlator --config CorrelatorConfig.yaml --config elasticsearchplugin.properties
+### Correlator config
+correlator:
+    initialization:
+        list:
+            - ${APAMA_HOME}/monitors/ConnectivityPluginsControl.mon
+            - ${APAMA_HOME}/monitors/ConnectivityPlugins.mon
+            - ${PARENT_DIR}/elastic.mon
+        encoding: UTF8
+   
+
+### Connectivity Plugins   
+connectivityPlugins:
+  ElasticSearchTransport:
+    directory: ${PARENT_DIR}/target/
+    classpath: elasticsearchtransport.jar
+    class: com.softwareag.elasticsearchtransport.ElasticSearchPlugin
+    
+### Logging
+correlatorLogging:
+  .root:
+    level: INFO
+  apama.connectivity: DEBUG
+  connectivity.ElasticSearchTransport.elastic: DEBUG
+
+startChains:
+  elastic:
+    - apama.eventMap:
+        allowMissing: true
+              
+    - ElasticSearchTransport:
+        port: ${elasticsearchplugin.port}
+        host: ${elasticsearchplugin.host}
+        user: ${elasticsearchplugin.user}
+        password: ${elasticsearchplugin.password}
+        index: ${elasticsearchplugin.index}
+        id: ${elasticsearchplugin.id}

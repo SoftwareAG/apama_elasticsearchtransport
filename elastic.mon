@@ -1,0 +1,27 @@
+﻿/** This monitor is responsible for ...  */
+monitor elastic {
+	
+	event Write{
+		string id;
+		string index;
+		string name;
+		string street;
+		integer number;
+				
+	}
+	
+	integer id:=0;
+	action onload() {
+		log "Loaded monitor elastic" at INFO;
+		//Write wr;
+		//on all Write() as wr{
+		on all wait(5.0) {
+			id:= id+1;
+			send Write(id.toString(),"apama","myname","mystreet",id) to "elastic";
+			
+		}
+		com.softwareag.connectivity.ConnectivityPlugins.onApplicationInitialized();
+		
+		
+	}
+}

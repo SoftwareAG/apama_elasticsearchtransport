@@ -10,9 +10,12 @@ import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.CredentialsProvider;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.impl.nio.client.HttpAsyncClientBuilder;
+import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.admin.cluster.health.ClusterHealthRequest;
+import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
-import org.elasticsearch.action.main.MainResponse;
+import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
 import org.elasticsearch.client.RestHighLevelClient;
@@ -22,12 +25,12 @@ import org.slf4j.Logger;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.softwareag.connectivity.AbstractTransport;
-import com.softwareag.connectivity.MapHelper;
 import com.softwareag.connectivity.Message;
 import com.softwareag.connectivity.PluginConstructorParameters.TransportConstructorParameters;
+import com.softwareag.connectivity.util.MapExtractor;
 
 /**
- * Hello world!
+ * Apama ElasticSearch Connectivity Plugin
  *
  */
 public class ElasticSearchPlugin extends AbstractTransport
@@ -37,19 +40,24 @@ public class ElasticSearchPlugin extends AbstractTransport
 	final private String USER;
 	final private  String PASSWORD;
 	final private  String INDEX_PATTER;
-	final private  String TYPE_PATTERN;
+	final private  String ID_PATTERN;
+	final private String[] mappingsIndex;
+	final private String[] mappingsId;
 	final CredentialsProvider credentialsProvider;
-	private RestClient restClient;
 	private RestHighLevelClient esClient;
+	
     public ElasticSearchPlugin(Logger logger, TransportConstructorParameters params)
 			throws IllegalArgumentException, Exception {
 		super(logger, params);
-		PORT = (int)MapHelper.getInteger(config, "port");
-		HOST = (String)MapHelper.getString(config, "host");
-		USER = (String)MapHelper.getString(config, "user");
-		PASSWORD = (String)MapHelper.getString(config, "password");
-		INDEX_PATTER = (String)MapHelper.getString(config, "index");
-		TYPE_PATTERN = (String)MapHelper.getString(config, "type");
+		MapExtractor config = new MapExtractor(params.getConfig(), "configuration");
+		PORT = Integer.valueOf(config.getStringDisallowEmpty("port"));
+		HOST = config.getStringDisallowEmpty("host");
+		USER = config.getStringDisallowEmpty("user");
+		PASSWORD = config.getStringDisallowEmpty("password");
+		INDEX_PATTER = config.getStringDisallowEmpty( "index");
+		ID_PATTERN = config.getStringAllowEmpty( "id");
+		mappingsIndex = INDEX_PATTER.split(",");
+		mappingsId = ID_PATTERN.split(",");
 		credentialsProvider= new BasicCredentialsProvider();
 		credentialsProvider.setCredentials(AuthScope.ANY,
 		        new UsernamePasswordCredentials(USER,PASSWORD));
@@ -57,13 +65,29 @@ public class ElasticSearchPlugin extends AbstractTransport
 
 
     
-    public IndexResponse insertString(String index, String type, String strToInsert) throws IOException {
-    	logger.debug("Index: " + index + " Type: " + type + " Doc: " + strToInsert); 
-		IndexRequest request = new IndexRequest(index);
-		request.type(type);
-		request.source(strToInsert,XContentType.JSON);
-		IndexResponse indexResponse = esClient.index(request);
-		return indexResponse;
+    public  void insertString(String index, String id, String strToInsert) throws IOException {
+    	
+    	logger.debug("Index: " + index + " DocumentID: " + id + " Doc: " + strToInsert); 
+		IndexRequest ir = new IndexRequest(index.toLowerCase());
+		ir.source(strToInsert,XContentType.JSON);
+		if (id!= null && !id.equals("")) {
+			ir.id(id);
+		}
+		
+		ActionListener<IndexResponse> listener = new ActionListener<IndexResponse>() {
+		    @Override
+		    public void onResponse(IndexResponse indexResponse) {
+		        logger.debug("Successfull written:" + indexResponse.toString());
+		    }
+
+		    @Override
+		    public void onFailure(Exception e) {
+		    	logger.error("Error writing IndexRequest:" + e.getMessage());
+		    }
+		};
+		
+		esClient.indexAsync(ir, RequestOptions.DEFAULT, listener );
+		
 	}
 
     @Override
@@ -76,24 +100,25 @@ public class ElasticSearchPlugin extends AbstractTransport
 		                return httpClientBuilder.setDefaultCredentialsProvider(credentialsProvider);
 		            }
 		        });
-		
-		restClient = builder.build();
-		esClient = new RestHighLevelClient(restClient);
+
+		esClient = new RestHighLevelClient(builder);
 		boolean clusterUp = false;
-		MainResponse response = null;
+		ClusterHealthResponse response = null;
+		ClusterHealthRequest chr = new ClusterHealthRequest();
+		
 		
 		while (!clusterUp) {
 			try {
-				response = esClient.info();
+				response = esClient.cluster().health(chr, RequestOptions.DEFAULT);
 			} catch (IOException e ) {
 				logger.error("Could not connect ot Elastic Search. Retrying. " + e.getMessage());
 				Thread.sleep(5000);
 				continue;
 			}
-			String clusterName = response.getClusterName().value();
+			String clusterName = response.getClusterName();
 			if (response != null && !clusterName.equalsIgnoreCase("")) {
 				clusterUp = true;
-				logger.info("Elastic Search Client Successfully Started on Cluster: " + clusterName);
+				logger.info("Elastic Search Client Successfully Started on Cluster: " + clusterName + " Cluster Health: " + response.getStatus() );
 				break;
 			}else {
 				logger.error("Could not get cluster name. Retrying. ");
@@ -105,90 +130,91 @@ public class ElasticSearchPlugin extends AbstractTransport
     
     @Override
 	public void shutdown() throws Exception {
-    	restClient.close();
+    	try {
+			esClient.close();
+			
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			logger.error("Error stopping Elastic Search Client: " +e.getMessage());
+		}
 		logger.info("Elastic Search Client Stopped");
 		
 	}
 	
     
-	@Override
 	public void sendBatchTowardsTransport(List<Message> messages) {
 		
 		for (Message message : messages) {
 			
 			
 			Map<String, Object> payloadMap;
-			Map<String, String> metaMap;
+			Map<String, Object> metaMap;
 			String index = "";
-			String type = "";
+			String id = "";
 
-			if (message.getPayload() instanceof Map && message.getMetadata() instanceof Map ) {
+			if (message.getPayload() instanceof Map && message.getMetadataMap() instanceof Map ) {
 				// Extracting Metadata				
-				metaMap = message.getMetadata();
+				metaMap = message.getMetadataMap();
 				// Extracting payload
 				payloadMap = (Map<String, Object>) message.getPayload();
 				logger.debug("Payload: " + payloadMap.toString());
 				logger.debug("Metadata: " + metaMap.toString());
-				String[] mappingsIndex = INDEX_PATTER.split(",");
-				String[] mappingsType = TYPE_PATTERN.split(",");
-				for (int i = 0; i < mappingsIndex.length; i++) {
-					String mappingfield = mappingsIndex[i].substring(mappingsIndex[i].indexOf(".") +1,mappingsIndex[i].length());
-					if (mappingsIndex[i].startsWith("metadata")) {
-						index += metaMap.get(mappingfield);
-					} else if(mappingsIndex[i].startsWith("payload")){
-						index += payloadMap.get(mappingfield);
-					}else if (!mappingsIndex[i].equals("")) {
-						index  += mappingsIndex[i];
-					}else {
-						logger.error("Could not get Index. Skipping. Please provide payload. or metadata. as prefix.  Or use a String");
-						continue;
-					}
-				}
-				for (int i = 0; i < mappingsType.length; i++) {
-					String mappingfield = mappingsType[i].substring(mappingsType[i].indexOf(".") +1,mappingsType[i].length());
-					if (mappingsType[i].startsWith("metadata")) {
-						type += metaMap.get(mappingfield);
-					} else if(mappingsType[i].startsWith("payload")){
-						type += payloadMap.get(mappingfield);
-						
-					}else if (!mappingsType[i].equals("")) {
-						type += mappingsType[i];
-					}
-					else {
-						logger.error("Could not get Type. Skipping. Please provide payload. or metadata. as prefix. Or use a String");
-						continue;
-					}
-				}
+				index = evalMapping(metaMap,payloadMap,mappingsIndex);
+				id = evalMapping(metaMap,payloadMap,mappingsId);
+				
 				logger.debug("index: "+ index);
-				logger.debug("type: "+ type);
+				logger.debug("id: "+ id);
+				
+				
+				// Convert Apama Event To JSON
+				ObjectMapper mapper = new ObjectMapper();
+				String jsonString = "";
+				try {
+					jsonString = mapper.writeValueAsString(payloadMap);
+				} catch (JsonProcessingException e1) {
+					logger.error("Could map event to json Document.", e1.getMessage());
+					continue;
+				}
+				
+				// Indexing Document
+				try {
+					insertString(index, id, jsonString);
+				} catch (IOException e) {
+					logger.error("Could not Index Document.", e.getMessage());
+					continue;
+				}
 				
 			} else {
 				logger.info("Payload Or Metadata is not a Map skipping.");
-				continue;
-			}
-
-			ObjectMapper mapper = new ObjectMapper();
-			String jsonString = "";
-			try {
-				jsonString = mapper.writeValueAsString(payloadMap);
-			} catch (JsonProcessingException e1) {
-				logger.error("Could map event to json Document.", e1.getMessage());
-				continue;
-			}
-			
-			// Indexing Document
-			IndexResponse resp;
-			try {
-				resp = insertString(index, type, jsonString);
-				logger.debug("Document insert response = " + resp.getResult().getLowercase()); 
-			} catch (IOException e) {
-				logger.error("Could not Index Document.", e.getMessage());
-				continue;
 			}
 		}
 
 		
+		
 	}
 	
+	private String evalMapping(Map<String, Object> metaMap,Map<String, Object> payloadMap, String[] mappingArray) {
+		
+		String mapping = "";
+		logger.debug("Payload: " + payloadMap.toString());
+		logger.debug("Metadata: " + metaMap.toString());
+		for (int i = 0; i < mappingArray.length; i++) {
+			// Get Map field
+			String mappingfield = mappingArray[i].substring(mappingArray[i].indexOf(".") +1,mappingArray[i].length());
+			if (mappingArray[i].startsWith("metadata")) {
+				mapping += metaMap.get(mappingfield);
+			} else if(mappingArray[i].startsWith("payload")){
+				mapping += payloadMap.get(mappingfield);
+			}else if (!mappingArray[i].equals("")) {
+				mapping  += mappingArray[i];
+			}else {
+				logger.error("Could not get Mapping. Settin mapping to empty string");
+				continue;
+			}
+		}
+		
+		logger.debug("mapping: "+ mapping);
+		return mapping;
+	}
 
 }
