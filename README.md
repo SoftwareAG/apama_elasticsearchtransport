@@ -2,7 +2,7 @@
 
 # Apama ElasticSearch Connectivity Plug-in 
 
-This Apama Connectivity Plug-in can be used to write Apama Events directly to ElasticSearch. Apama 10.0+ versions are supported.
+This Apama Connectivity Plug-in can be used to write Apama Events directly to ElasticSearch. This provides allows storage of Apama’s prescreened and enriched data to ElasticSearch’s query capability. This plugin can be quickly and easily installed and configured. Apama 10.0+ versions are supported.
 
 For more information you can Ask a Question in the [TECHcommunity Forums](http://tech.forums.softwareag.com/techjforum/forums/list.page?product=webmethods-io-b2b).
 
